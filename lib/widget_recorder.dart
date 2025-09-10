@@ -27,16 +27,19 @@ Future<List<int>> optimizeImageColors(Map<String, dynamic> message) async {
 
 class WidgetRecorderController {
   VoidCallback? _startCallback;
-  VoidCallback? _stopCallback;
+  Future<List<int>> Function()? _stopCallback;
 
-  void _bind(VoidCallback start, VoidCallback stop) {
+  void _bind(VoidCallback start, Future<List<int>> Function() stop) {
     _startCallback = start;
     _stopCallback = stop;
   }
 
   void start() => _startCallback?.call();
 
-  void stop() => _stopCallback?.call();
+  Future<List<int>> stop() async {
+    final bytes = await _stopCallback?.call();
+    return bytes ?? [];
+  }
 }
 
 class WidgetRecorderResult {
@@ -160,8 +163,8 @@ class _WidgetRecorderState extends State<WidgetRecorder>
     _ticker.start();
   }
 
-  void _stopRecording() async {
-    if (!_isRecording) return;
+  Future<List<int>> _stopRecording() async {
+    if (!_isRecording) return [];
     _ticker.stop();
     setState(() => _isRecording = false);
     final fileBytes = await createWvfZip(
@@ -177,6 +180,7 @@ class _WidgetRecorderState extends State<WidgetRecorder>
         colorDepth: widget.colorDepth,
       ),
     );
+    return fileBytes;
   }
 
   @override
