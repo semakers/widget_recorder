@@ -12,7 +12,7 @@ dependencies:
   programming_blocks: ^0.0.1
   path_provider: ^2.1.5
 
-  widget_recorder:
+  flutter_widget_recorder:
     path: ../
 
 dev_dependencies:

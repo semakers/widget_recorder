@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:programming_blocks/programming_blocks.dart';
-import 'package:widget_recorder/widget_recorder.dart';
-import 'package:widget_recorder/widget_recorder_player.dart';
+import 'package:flutter_widget_recorder/widget_recorder.dart';
+import 'package:flutter_widget_recorder/widget_recorder_player.dart';
 
 void main() {
   runApp(const MainApp());
