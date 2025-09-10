@@ -1,4 +1,4 @@
-name: flutter_widget_recorder
+name: widget_recorder_flutter
 description: >
   A Flutter package to record and play lightweight Flutter Widget Animations (.fwa),
   an efficient alternative to GIF for tutorials and UI demos.
