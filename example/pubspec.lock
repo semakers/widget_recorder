@@ -168,13 +168,6 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  widget_recorder_flutter:
-    dependency: "direct main"
-    description:
-      path: ".."
-      relative: true
-    source: path
-    version: "0.0.1"
   http:
     dependency: transitive
     description:
@@ -452,6 +445,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "15.0.2"
+  widget_recorder_flutter:
+    dependency: "direct main"
+    description:
+      path: ".."
+      relative: true
+    source: path
+    version: "0.0.2"
   xdg_directories:
     dependency: transitive
     description:

@@ -1,28 +1,36 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/rendering.dart';
 
-Future<List<int>> optimizeImageColors(Map<String, dynamic> message) async {
-  final List<int> originalBytes = message['original_bytes'];
-  final int maxColors = message['max_colors'];
-  final img.Image? image = img.decodeImage(Uint8List.fromList(originalBytes));
-  if (image == null) {
-    throw Exception('No se pudo decodificar la imagen');
+// Nueva función para procesar captura completa en isolate
+Future<List<int>?> processFrameCapture(Map<String, dynamic> message) async {
+  try {
+    final List<int> imageBytes = message['image_bytes'];
+    final int colorDepth = message['color_depth'];
+
+    // Solo optimizar si es necesario
+    if (colorDepth < 256) {
+      final img.Image? image = img.decodeImage(Uint8List.fromList(imageBytes));
+      if (image == null) return imageBytes;
+
+      final img.Image quantized = img.quantize(
+        image,
+        numberOfColors: colorDepth,
+      );
+      return img.encodePng(quantized, level: 6);
+    } else {
+      return imageBytes;
+    }
+  } catch (e) {
+    debugPrint('[WidgetRecorder] Error procesando frame: $e');
+    return message['image_bytes']; // Retornar original en caso de error
   }
-
-  final img.Image quantized = img.quantize(image, numberOfColors: maxColors);
-
-  final List<int> optimizedBytes = img.encodePng(quantized, level: 9);
-
-  return optimizedBytes;
 }
 
 class WidgetRecorderController {
@@ -58,17 +66,19 @@ class WidgetRecorder extends StatefulWidget {
   final Widget child;
   final int fps;
   final int colorDepth;
+  final int maxFrames; // Nuevo parámetro para limitar frames en memoria
   final WidgetRecorderController? controller;
   final void Function(WidgetRecorderResult result)? onRecordingFinished;
 
   const WidgetRecorder({
-    super.key,
+    Key? key,
     required this.child,
     this.fps = 30,
     this.colorDepth = 32,
+    this.maxFrames = 1800, // 60 segundos a 30fps por defecto
     this.controller,
     this.onRecordingFinished,
-  });
+  }) : super(key: key);
 
   @override
   State<WidgetRecorder> createState() => _WidgetRecorderState();
@@ -77,10 +87,10 @@ class WidgetRecorder extends StatefulWidget {
 class _WidgetRecorderState extends State<WidgetRecorder>
     with SingleTickerProviderStateMixin {
   final GlobalKey _boundaryKey = GlobalKey();
-  late final Ticker _ticker;
+  Timer? _captureTimer;
   bool _isRecording = false;
+  bool _isCapturing = false; // Bloqueo simple pero efectivo
   final List<List<int>> _frames = [];
-  Duration _elapsed = Duration.zero;
 
   Future<List<int>> createWvfZip({
     required List<List<int>> frames,
@@ -115,41 +125,57 @@ class _WidgetRecorderState extends State<WidgetRecorder>
   @override
   void initState() {
     super.initState();
-    _ticker = createTicker(_onTick);
-
     widget.controller?._bind(_startRecording, _stopRecording);
   }
 
-  void _onTick(Duration elapsed) {
-    final frameInterval = Duration(milliseconds: (1000 / widget.fps).round());
-    if (_elapsed == Duration.zero || elapsed - _elapsed >= frameInterval) {
-      _elapsed = elapsed;
-      _captureFrame();
-    }
+  void _startTimer() {
+    final intervalMs = (1000 / widget.fps).round();
+    _captureTimer = Timer.periodic(Duration(milliseconds: intervalMs), (timer) {
+      if (!_isRecording) {
+        timer.cancel();
+        return;
+      }
+
+      // SIMPLE: Si está ocupado, saltar este frame (mantener UI fluida)
+      if (!_isCapturing) {
+        _captureFrame();
+      }
+    });
   }
 
   Future<void> _captureFrame() async {
     if (!_isRecording) return;
+
+    _isCapturing = true;
+
     try {
-      await Future.delayed(Duration.zero);
+      final boundary = _boundaryKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) {
+        _isCapturing = false;
+        return;
+      }
 
-      final boundary =
-          _boundaryKey.currentContext?.findRenderObject()
-              as RenderRepaintBoundary?;
-      if (boundary == null) return;
-
-      final image = await boundary.toImage(pixelRatio: 1.0);
+      // OPTIMIZACIÓN EXTREMA: Resolución muy baja para velocidad máxima
+      final image = await boundary.toImage(
+        pixelRatio: 1,
+      ); // ¡1/4 de resolución!
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
 
-      if (byteData != null) {
-        final optimizedBytes = await compute(optimizeImageColors, {
-          'original_bytes': byteData.buffer.asUint8List(),
-          'max_colors': widget.colorDepth,
-        });
-        _frames.add(optimizedBytes);
+      if (byteData != null && _isRecording) {
+        final imageBytes = byteData.buffer.asUint8List();
+
+        // NO hacer optimización de colores - demasiado lento
+        // Usar directamente los bytes para máxima velocidad
+        if (_frames.length >= widget.maxFrames) {
+          _frames.removeAt(0);
+        }
+        _frames.add(imageBytes);
       }
     } catch (e) {
       debugPrint('[WidgetRecorder] Error capturando frame: $e');
+    } finally {
+      _isCapturing = false;
     }
   }
 
@@ -157,21 +183,28 @@ class _WidgetRecorderState extends State<WidgetRecorder>
     if (_isRecording) return;
     setState(() {
       _frames.clear();
-      _elapsed = Duration.zero;
       _isRecording = true;
     });
-    _ticker.start();
+    _startTimer();
   }
 
   Future<List<int>> _stopRecording() async {
     if (!_isRecording) return [];
-    _ticker.stop();
+
+    _captureTimer?.cancel();
     setState(() => _isRecording = false);
+
+    // Crear una copia de los frames antes de limpiar
+    final framesCopy = List<List<int>>.from(_frames);
+
     final fileBytes = await createWvfZip(
-      frames: _frames,
+      frames: framesCopy,
       fps: widget.fps,
       colorDepth: widget.colorDepth,
     );
+
+    // Limpiar la memoria
+    _frames.clear();
 
     widget.onRecordingFinished?.call(
       WidgetRecorderResult(
@@ -185,7 +218,7 @@ class _WidgetRecorderState extends State<WidgetRecorder>
 
   @override
   void dispose() {
-    _ticker.dispose();
+    _captureTimer?.cancel();
     super.dispose();
   }
 
