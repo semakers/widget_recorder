@@ -8,26 +8,37 @@ import 'package:image/image.dart' as img;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+// Clase para pasar parámetros a compute
+class FrameProcessingParams {
+  final List<int> imageBytes;
+  final int colorDepth;
+
+  FrameProcessingParams({
+    required this.imageBytes,
+    required this.colorDepth,
+  });
+}
+
 // Nueva función para procesar captura completa en isolate
-Future<List<int>?> processFrameCapture(
-    List<int> imageBytes, int colorDepth) async {
+Future<List<int>?> processFrameCapture(FrameProcessingParams params) async {
   try {
     // Solo optimizar si es necesario
-    if (colorDepth < 256) {
-      final img.Image? image = img.decodeImage(Uint8List.fromList(imageBytes));
-      if (image == null) return imageBytes;
+    if (params.colorDepth < 256) {
+      final img.Image? image =
+          img.decodeImage(Uint8List.fromList(params.imageBytes));
+      if (image == null) return params.imageBytes;
 
       final img.Image quantized = img.quantize(
         image,
-        numberOfColors: colorDepth,
+        numberOfColors: params.colorDepth,
       );
       return img.encodePng(quantized, level: 6);
     } else {
-      return imageBytes;
+      return params.imageBytes;
     }
   } catch (e) {
     debugPrint('[WidgetRecorder] Error procesando frame: $e');
-    return imageBytes; // Retornar original en caso de error
+    return params.imageBytes; // Retornar original en caso de error
   }
 }
 
@@ -99,7 +110,15 @@ class _WidgetRecorderState extends State<WidgetRecorder>
 
     for (int i = 0; i < frames.length; i++) {
       final fileName = 'frames/$i.png';
-      final frameBytes = await processFrameCapture(frames[i], colorDepth);
+
+      // Procesar frame en paralelo usando compute
+      final frameBytes = await compute(
+        processFrameCapture,
+        FrameProcessingParams(
+          imageBytes: frames[i],
+          colorDepth: colorDepth,
+        ),
+      );
 
       archive.addFile(ArchiveFile(fileName, frameBytes!.length, frameBytes));
     }
