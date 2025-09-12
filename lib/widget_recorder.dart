@@ -9,11 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 // Nueva función para procesar captura completa en isolate
-Future<List<int>?> processFrameCapture(Map<String, dynamic> message) async {
+Future<List<int>?> processFrameCapture(
+    List<int> imageBytes, int colorDepth) async {
   try {
-    final List<int> imageBytes = message['image_bytes'];
-    final int colorDepth = message['color_depth'];
-
     // Solo optimizar si es necesario
     if (colorDepth < 256) {
       final img.Image? image = img.decodeImage(Uint8List.fromList(imageBytes));
@@ -29,7 +27,7 @@ Future<List<int>?> processFrameCapture(Map<String, dynamic> message) async {
     }
   } catch (e) {
     debugPrint('[WidgetRecorder] Error procesando frame: $e');
-    return message['image_bytes']; // Retornar original en caso de error
+    return imageBytes; // Retornar original en caso de error
   }
 }
 
@@ -101,9 +99,9 @@ class _WidgetRecorderState extends State<WidgetRecorder>
 
     for (int i = 0; i < frames.length; i++) {
       final fileName = 'frames/$i.png';
-      final frameBytes = Uint8List.fromList(frames[i]);
+      final frameBytes = await processFrameCapture(frames[i], colorDepth);
 
-      archive.addFile(ArchiveFile(fileName, frameBytes.length, frameBytes));
+      archive.addFile(ArchiveFile(fileName, frameBytes!.length, frameBytes));
     }
 
     final meta = {
@@ -156,17 +154,31 @@ class _WidgetRecorderState extends State<WidgetRecorder>
         return;
       }
 
-      // OPTIMIZACIÓN EXTREMA: Resolución muy baja para velocidad máxima
-      final image = await boundary.toImage(
-        pixelRatio: 1,
-      ); // ¡1/4 de resolución!
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      // Capturar imagen y forzar formato de 8 bits por canal
+      final image = await boundary.toImage();
+
+      // Forzar formato de 8 bits por canal usando rawRgba
+      final byteData =
+          await image.toByteData(format: ui.ImageByteFormat.rawRgba);
 
       if (byteData != null && _isRecording) {
-        final imageBytes = byteData.buffer.asUint8List();
+        // Convertir RGBA raw a PNG de 8 bits
+        final width = image.width;
+        final height = image.height;
+        final rgba = byteData.buffer.asUint8List();
 
-        // NO hacer optimización de colores - demasiado lento
-        // Usar directamente los bytes para máxima velocidad
+        // Crear imagen con el paquete image (forzará 8 bits)
+        final img.Image imgImage = img.Image.fromBytes(
+          width: width,
+          height: height,
+          bytes: rgba.buffer,
+          format: img.Format.uint8,
+          numChannels: 4,
+        );
+
+        // Codificar a PNG de 8 bits
+        final imageBytes = img.encodePng(imgImage);
+
         if (_frames.length >= widget.maxFrames) {
           _frames.removeAt(0);
         }
